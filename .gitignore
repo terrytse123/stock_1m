@@ -4,7 +4,10 @@ node_modules
 .tanstack
 screenshots
 artifacts
+attachments
 dist
 *.log
 .env
 .env.*
+.project_id
+.node_modules.lock

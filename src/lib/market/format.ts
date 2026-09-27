@@ -43,6 +43,10 @@ export function formatWhen(ms: number): string {
   return `${Number(pick("month"))}/${Number(pick("day"))} ${pick("hour")}:${pick("minute")}`;
 }
 
+export function priceAt(price: number, ret: number): number {
+  return Math.round(price * (1 + ret) * 100) / 100;
+}
+
 export function toneClass(n: number): string {
   if (n > 0.0005) return "text-up";
   if (n < -0.0005) return "text-down";

@@ -5,7 +5,7 @@ import { StockDetail, type NoteState } from "@/components/stock-detail";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { explainStock, scanMarket } from "@/lib/market/api";
-import { biasClass, biasLabel, formatMoney, formatPct, formatWhen, toneClass } from "@/lib/market/format";
+import { biasClass, biasLabel, formatMoney, formatPct, formatWhen, priceAt, toneClass } from "@/lib/market/format";
 import { useBook } from "@/lib/market/store";
 import type { ScanResult, StockSnapshot } from "@/lib/market/types";
 import { BENCHMARKS, normalizeSymbol, TAPE_LABEL, UNIVERSE } from "@/lib/market/universe";
@@ -253,15 +253,16 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
                     </span>
                   </span>
                   <span className="mt-4 flex items-baseline justify-between text-xs">
-                    <span className="text-subtle">一個月基準</span>
-                    <span className={cn("num font-medium", toneClass(stock.scenario.base))}>
-                      {formatPct(stock.scenario.base)}
+                    <span className="text-subtle">{stock.bias === "up" ? "預計價位" : "情境基準"}</span>
+                    <span className={cn("num font-medium", stock.bias === "up" ? "text-up" : toneClass(stock.scenario.base))}>
+                      {formatMoney(priceAt(stock.price, stock.scenario.base))}
                     </span>
                   </span>
                   <span className="mt-1 flex items-baseline justify-between text-xs text-subtle">
                     <span>區間</span>
                     <span className="num">
-                      {formatPct(stock.scenario.low)} – {formatPct(stock.scenario.high)}
+                      {formatMoney(priceAt(stock.price, stock.scenario.low))} –{" "}
+                      {formatMoney(priceAt(stock.price, stock.scenario.high))}
                     </span>
                   </span>
                 </button>
@@ -368,7 +369,7 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
           </p>
         </details>
         <p className="mt-4 max-w-3xl">
-          行情為公開報價，可能延遲，也可能與你的券商不同。月升不做投資建議，也不預測精確點位。過往價格不能保證下個月上漲。
+          行情為公開報價，可能延遲，也可能與你的券商不同。月升不做投資建議。看升標的的預計價位，是把約一個月的情境報酬換成美元，不是保證到達的目標。過往價格不能保證下個月上漲。
         </p>
       </footer>
     </main>
@@ -409,9 +410,12 @@ function StockRow({
         <span className="hidden sm:block">
           <Sparkline points={points} up={up} />
         </span>
-        <span className="w-12 shrink-0 text-right">
+        <span className="w-20 shrink-0 text-right">
           <span className="type-score block text-xl">{stock.score}</span>
           <span className={cn("text-xs", biasClass(stock.bias))}>{biasLabel(stock.bias)}</span>
+          {stock.bias === "up" ? (
+            <span className="num mt-0.5 block text-xs text-up">{formatMoney(priceAt(stock.price, stock.scenario.base))}</span>
+          ) : null}
         </span>
       </button>
       <button

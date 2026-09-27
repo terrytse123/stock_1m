@@ -1,4 +1,4 @@
-import { formatPct } from "./format";
+import { formatMoney, formatPct, priceAt } from "./format";
 import type { Bias, Factor, StockSnapshot } from "./types";
 
 export type Bar = { t: number; c: number; v: number };
@@ -319,7 +319,7 @@ export function analyzeStock(input: AnalyzeInput): StockSnapshot | null {
       ret21,
       rsi: rsiValue,
       excess,
-      scenarioText: `一個月情境約 ${formatPct(scenario.low)} 到 ${formatPct(scenario.high)}，基準 ${formatPct(scenario.base)}。`,
+      scenarioText: `一個月情境約 ${formatPct(scenario.low)} 到 ${formatPct(scenario.high)}，基準 ${formatPct(scenario.base)}，換算價位約 ${formatMoney(priceAt(input.price, scenario.low))} 到 ${formatMoney(priceAt(input.price, scenario.high))}，基準 ${formatMoney(priceAt(input.price, scenario.base))}。`,
     }),
     series: input.bars.slice(-120).map((bar) => ({ t: bar.t, c: roundTo(bar.c, 4) })),
   };

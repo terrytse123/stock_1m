@@ -1,4 +1,5 @@
 import { analyzeStock, trailingReturn, type Bar } from "./model";
+import { formatMoney, priceAt } from "./format";
 import type { ExplainResult, MarketPulse, ScanInput, ScanOk, ScanResult, StockSnapshot } from "./types";
 import { BENCHMARKS, normalizeSymbol, sectorFor, UNIVERSE } from "./universe";
 
@@ -283,7 +284,7 @@ async function writeWithGrok(snap: StockSnapshot): Promise<ExplainResult> {
     `現價 ${snap.price}，今日 ${snap.changePct}`,
     `分數 ${snap.score}，傾向 ${snap.bias}`,
     `近月 ${snap.ret21 ?? "n/a"}，三月 ${snap.ret63 ?? "n/a"}，RSI ${snap.rsi ?? "n/a"}`,
-    `一個月情境 低 ${snap.scenario.low} 基準 ${snap.scenario.base} 高 ${snap.scenario.high}`,
+    `一個月情境 低 ${snap.scenario.low}（${formatMoney(priceAt(snap.price, snap.scenario.low))}）基準 ${snap.scenario.base}（${formatMoney(priceAt(snap.price, snap.scenario.base))}）高 ${snap.scenario.high}（${formatMoney(priceAt(snap.price, snap.scenario.high))}）`,
     "因子：",
     factors,
     "自動摘要：",
