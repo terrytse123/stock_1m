@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Star } from "lucide-react";
 import { Sparkline } from "@/components/sparkline";
 import { StockDetail, type NoteState } from "@/components/stock-detail";
+import { SwingBoard } from "@/components/swing-board";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { explainStock, scanMarket } from "@/lib/market/api";
 import { biasClass, biasLabel, formatMoney, formatPct, formatWhen, priceAt, toneClass } from "@/lib/market/format";
 import { useBook } from "@/lib/market/store";
+import { buildSwingPlans } from "@/lib/market/swing";
 import type { ScanResult, StockSnapshot } from "@/lib/market/types";
 import { BENCHMARKS, normalizeSymbol, TAPE_LABEL, UNIVERSE } from "@/lib/market/universe";
 
@@ -132,6 +134,10 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
   const spy = result.ok ? result.market.find((item) => item.symbol === "SPY") : undefined;
   const top = stocks.slice(0, 3);
   const active = stocks.find((stock) => stock.symbol === selected) ?? null;
+  const swingPlans = useMemo(
+    () => (result.ok ? buildSwingPlans(result.stocks, result.asOf) : []),
+    [result],
+  );
 
   const rows = useMemo(() => {
     let next = stocks;
@@ -217,6 +223,14 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
             </div>
             <p className="mt-3 text-xs leading-relaxed text-subtle">{regimeLine(spy?.score)}</p>
           </section>
+
+          <SwingBoard
+            plans={swingPlans}
+            pending={pending}
+            hydrated={hydrated}
+            onRefresh={() => void reload(true, useBook.getState().extras)}
+            onOpen={choose}
+          />
 
           <section className="mt-8" aria-label="下月預測">
             <div className="flex items-end justify-between gap-3">

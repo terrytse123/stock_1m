@@ -43,6 +43,16 @@ export function formatWhen(ms: number): string {
   return `${Number(pick("month"))}/${Number(pick("day"))} ${pick("hour")}:${pick("minute")}`;
 }
 
+export function formatDay(ms: number): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date(ms));
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${Number(pick("month"))}/${Number(pick("day"))}`;
+}
+
 export function priceAt(price: number, ret: number): number {
   return Math.round(price * (1 + ret) * 100) / 100;
 }
