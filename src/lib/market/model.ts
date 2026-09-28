@@ -1,5 +1,5 @@
-import { formatMoney, formatPct, priceAt } from "./format";
-import type { Bias, Factor, StockSnapshot } from "./types";
+import { biasLabel, formatMoney, formatPct, priceAt } from "./format";
+import type { Bias, BuySignal, Factor, HorizonView, StockSnapshot } from "./types";
 
 export type Bar = { t: number; c: number; v: number };
 
@@ -13,6 +13,9 @@ export type AnalyzeInput = {
   high52: number | null;
   low52: number | null;
   bars: Bar[];
+  spyRet10: number | null;
+  spyRet20: number | null;
+  spyRet30: number | null;
   spyRet63: number | null;
 };
 
@@ -197,6 +200,99 @@ function volumeFactor(volumes: number[], ret21: number | null): Factor | null {
   };
 }
 
+function locationScore(dist50: number | null, days: 10 | 20 | 30): number {
+  if (dist50 == null) return 50;
+  if (days === 10) return sweetReturn(dist50, 0.015, 0.04);
+  if (days === 20) return sweetReturn(dist50, 0.03, 0.06);
+  return clamp(52 + dist50 * 160, 12, 92);
+}
+
+function rsiForHorizon(value: number, days: 10 | 20 | 30): number {
+  if (days !== 10) return rsiFactor(value).score;
+  if (value >= 45 && value <= 60) return clamp(90 - Math.abs(value - 52), 70, 94);
+  if (value > 68) return clamp(36 - (value - 68) * 2.2, 8, 36);
+  if (value > 60) return clamp(68 - (value - 60) * 2, 40, 68);
+  if (value < 35) return 40;
+  return 58;
+}
+
+function horizonView(
+  days: 10 | 20 | 30,
+  closes: number[],
+  price: number,
+  sma50: number | null,
+  rsiValue: number | null,
+  sigma: number | null,
+  spyRet: number | null,
+): HorizonView {
+  const ret = trailingReturn(closes, days);
+  const dist50 = sma50 != null && sma50 > 0 ? price / sma50 - 1 : null;
+  const parts: { score: number; weight: number }[] = [];
+  if (ret != null) {
+    const peak = days === 10 ? 0.025 : days === 20 ? 0.05 : 0.075;
+    const width = days === 10 ? 0.045 : days === 20 ? 0.07 : 0.1;
+    parts.push({ score: sweetReturn(ret, peak, width), weight: days === 10 ? 0.34 : days === 20 ? 0.3 : 0.24 });
+  }
+  parts.push({
+    score: locationScore(dist50, days),
+    weight: days === 10 ? 0.22 : days === 20 ? 0.26 : 0.34,
+  });
+  if (rsiValue != null) {
+    parts.push({ score: rsiForHorizon(rsiValue, days), weight: days === 10 ? 0.28 : days === 20 ? 0.18 : 0.12 });
+  }
+  if (ret != null && spyRet != null) {
+    parts.push({ score: relativeFactor(ret, spyRet).score, weight: days === 30 ? 0.28 : 0.16 });
+  }
+  const weightSum = parts.reduce((sum, part) => sum + part.weight, 0);
+  const score = Math.round(parts.reduce((sum, part) => sum + part.score * part.weight, 0) / weightSum);
+  const bias = biasOf(score);
+  const band = (sigma ?? 0.012) * Math.sqrt(days);
+  const shrink = days === 10 ? 0.45 : days === 20 ? 0.32 : 0.26;
+  const base = ret == null ? 0 : clamp(ret * shrink, -band, band * 0.9);
+  return {
+    days,
+    bias,
+    low: roundTo(base - band, 4),
+    base: roundTo(base, 4),
+    high: roundTo(base + band * 0.85, 4),
+  };
+}
+
+function buyCall(input: {
+  horizons: HorizonView[];
+  rsi: number | null;
+  sma50Dist: number | null;
+  ret10: number | null;
+}): { buy: BuySignal; buyNote: string } {
+  const h10 = input.horizons.find((row) => row.days === 10);
+  const h20 = input.horizons.find((row) => row.days === 20);
+  const h30 = input.horizons.find((row) => row.days === 30);
+  const dist = input.sma50Dist ?? 0;
+  const heat = input.rsi ?? 50;
+  const extended = dist > 0.045 || heat > 65 || (input.ret10 ?? 0) > 0.06;
+  const nearMa = dist >= -0.015 && dist <= 0.04;
+  const rsiOk = heat >= 42 && heat <= 64;
+  if (h20?.bias === "up" && h10?.bias !== "down" && nearMa && rsiOk && !extended) {
+    return {
+      buy: "buy",
+      buyNote: "10 日沒有轉弱，20 日看升，價位還在 50 日均線附近。可以掛限價，不必追。",
+    };
+  }
+  if ((h20?.bias === "up" || h30?.bias === "up") && (extended || h10?.bias === "down")) {
+    return {
+      buy: "wait",
+      buyNote: "20 或 30 日仍偏多，但 10 日已偏熱或轉弱。等回落，不要追現價。",
+    };
+  }
+  if (h10?.bias === "down" && h20?.bias === "down") {
+    return { buy: "avoid", buyNote: "10 日和 20 日都偏弱。這輪不列為買入。" };
+  }
+  if (dist < -0.02) {
+    return { buy: "avoid", buyNote: "跌破 50 日均線。這輪不列為買入。" };
+  }
+  return { buy: "wait", buyNote: "多空不夠集中。先觀望，等 10 日和 20 日同向。" };
+}
+
 function writeSummary(input: {
   symbol: string;
   bias: Bias;
@@ -238,6 +334,7 @@ export function analyzeStock(input: AnalyzeInput): StockSnapshot | null {
 
   const sma50 = sma(closes, 50);
   const sma200 = sma(closes, 200);
+  const ret10 = trailingReturn(closes, 10);
   const ret21 = trailingReturn(closes, 21);
   const ret63 = trailingReturn(closes, 63);
   const rsiValue = rsi(closes);
@@ -274,16 +371,17 @@ export function analyzeStock(input: AnalyzeInput): StockSnapshot | null {
     weighted.reduce((sum, row) => sum + row.factor.score * row.weight, 0) / weightSum,
   );
   const bias = biasOf(score);
-
-  let base = 0;
-  if (ret63 != null) base = (ret63 / 63) * 21 * 0.28;
-  else if (ret21 != null) base = ret21 * 0.22;
-  const band = vol21 ?? 0.06;
-  const scenario = {
-    low: roundTo(base - band, 4),
-    base: roundTo(base, 4),
-    high: roundTo(base + band * 0.9, 4),
-  };
+  const horizons: HorizonView[] = [
+    horizonView(10, closes, input.price, sma50, rsiValue, sigma, input.spyRet10),
+    horizonView(20, closes, input.price, sma50, rsiValue, sigma, input.spyRet20),
+    horizonView(30, closes, input.price, sma50, rsiValue, sigma, input.spyRet30),
+  ];
+  const mid = horizons[1] ?? horizons[0];
+  const scenario = mid
+    ? { low: mid.low, base: mid.base, high: mid.high }
+    : { low: 0, base: 0, high: 0 };
+  const sma50Dist = sma50 != null && sma50 > 0 ? roundTo(input.price / sma50 - 1, 6) : null;
+  const call = buyCall({ horizons, rsi: rsiValue, sma50Dist, ret10 });
 
   const prev = input.prevClose > 0 ? input.prevClose : (closes[closes.length - 2] ?? input.price);
   const changePct = prev > 0 ? input.price / prev - 1 : 0;
@@ -305,12 +403,15 @@ export function analyzeStock(input: AnalyzeInput): StockSnapshot | null {
     ret21: ret21 == null ? null : roundTo(ret21, 6),
     ret63: ret63 == null ? null : roundTo(ret63, 6),
     rsi: rsiValue == null ? null : roundTo(rsiValue, 1),
-    sma50Dist: sma50 != null && sma50 > 0 ? roundTo(input.price / sma50 - 1, 6) : null,
+    sma50Dist,
     sma200Dist: sma200 != null && sma200 > 0 ? roundTo(input.price / sma200 - 1, 6) : null,
     vol21: vol21 == null ? null : roundTo(vol21, 6),
     high52: input.high52,
     low52: input.low52,
     scenario,
+    horizons,
+    buy: call.buy,
+    buyNote: call.buyNote,
     factors: weighted.map((row) => row.factor),
     summary: writeSummary({
       symbol: input.symbol,
@@ -319,7 +420,7 @@ export function analyzeStock(input: AnalyzeInput): StockSnapshot | null {
       ret21,
       rsi: rsiValue,
       excess,
-      scenarioText: `一個月情境約 ${formatPct(scenario.low)} 到 ${formatPct(scenario.high)}，基準 ${formatPct(scenario.base)}，換算價位約 ${formatMoney(priceAt(input.price, scenario.low))} 到 ${formatMoney(priceAt(input.price, scenario.high))}，基準 ${formatMoney(priceAt(input.price, scenario.base))}。`,
+      scenarioText: `10 日${biasLabel(horizons[0]?.bias ?? "flat")}、20 日${biasLabel(horizons[1]?.bias ?? "flat")}、30 日${biasLabel(horizons[2]?.bias ?? "flat")}。20 日基準 ${formatPct(scenario.base)}，約 ${formatMoney(priceAt(input.price, scenario.base))}。訊號：${call.buyNote}`,
     }),
     series: input.bars.slice(-120).map((bar) => ({ t: bar.t, c: roundTo(bar.c, 4) })),
   };

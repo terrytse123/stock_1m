@@ -1,5 +1,15 @@
 export type Bias = "up" | "flat" | "down";
 
+export type BuySignal = "buy" | "wait" | "avoid";
+
+export type HorizonView = {
+  days: 10 | 20 | 30;
+  bias: Bias;
+  low: number;
+  base: number;
+  high: number;
+};
+
 export type Factor = {
   key: string;
   label: string;
@@ -33,6 +43,9 @@ export type StockSnapshot = {
   high52: number | null;
   low52: number | null;
   scenario: Scenario;
+  horizons: HorizonView[];
+  buy: BuySignal;
+  buyNote: string;
   factors: Factor[];
   summary: string;
   series: { t: number; c: number }[];

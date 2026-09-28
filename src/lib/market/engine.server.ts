@@ -20,11 +20,13 @@ type RawChart = {
   bars: Bar[];
 };
 
+type SpyRets = { ret10: number | null; ret20: number | null; ret30: number | null; ret63: number | null };
+
 type Cache = {
   at: number;
   extraKey: string;
   result: ScanOk;
-  spyRet63: number | null;
+  spy: SpyRets;
 };
 
 let cache: Cache | null = null;
@@ -137,7 +139,7 @@ function toPulse(snap: StockSnapshot): MarketPulse {
   };
 }
 
-function snapshotFromRaw(raw: RawChart, spyRet63: number | null): StockSnapshot | null {
+function snapshotFromRaw(raw: RawChart, spy: SpyRets): StockSnapshot | null {
   return analyzeStock({
     symbol: raw.symbol,
     name: raw.name,
@@ -148,7 +150,10 @@ function snapshotFromRaw(raw: RawChart, spyRet63: number | null): StockSnapshot 
     high52: raw.high52,
     low52: raw.low52,
     bars: raw.bars,
-    spyRet63,
+    spyRet10: spy.ret10,
+    spyRet20: spy.ret20,
+    spyRet30: spy.ret30,
+    spyRet63: spy.ret63,
   });
 }
 
@@ -157,7 +162,13 @@ export async function scanUniverse(input: ScanInput): Promise<ScanResult> {
     .map((symbol) => normalizeSymbol(symbol))
     .filter((symbol): symbol is string => Boolean(symbol));
   const extraKey = [...new Set(extra)].sort().join(",");
-  if (!input.refresh && cache && cache.extraKey === extraKey && Date.now() - cache.at < TTL_MS) {
+  if (
+    !input.refresh &&
+    cache &&
+    cache.extraKey === extraKey &&
+    Date.now() - cache.at < TTL_MS &&
+    cache.result.stocks.some((stock) => stock.horizons?.length === 3)
+  ) {
     return cache.result;
   }
 
@@ -172,7 +183,12 @@ export async function scanUniverse(input: ScanInput): Promise<ScanResult> {
   });
 
   const spyBars = bySymbol.get("SPY")?.bars.map((bar) => bar.c) ?? [];
-  const spyRet63 = trailingReturn(spyBars, 63);
+  const spy = {
+    ret10: trailingReturn(spyBars, 10),
+    ret20: trailingReturn(spyBars, 20),
+    ret30: trailingReturn(spyBars, 30),
+    ret63: trailingReturn(spyBars, 63),
+  };
   const stockSet = new Set([...UNIVERSE.map((row) => row.symbol), ...extra]);
   const stocks: StockSnapshot[] = [];
   const market: MarketPulse[] = [];
@@ -180,14 +196,14 @@ export async function scanUniverse(input: ScanInput): Promise<ScanResult> {
   for (const symbol of BENCHMARKS) {
     const raw = bySymbol.get(symbol);
     if (!raw) continue;
-    const snap = snapshotFromRaw(raw, spyRet63);
+    const snap = snapshotFromRaw(raw, spy);
     if (snap) market.push(toPulse(snap));
   }
 
   for (const symbol of stockSet) {
     const raw = bySymbol.get(symbol);
     if (!raw) continue;
-    const snap = snapshotFromRaw(raw, spyRet63);
+    const snap = snapshotFromRaw(raw, spy);
     if (!snap) {
       if (!failed.includes(symbol)) failed.push(symbol);
       continue;
@@ -211,7 +227,7 @@ export async function scanUniverse(input: ScanInput): Promise<ScanResult> {
 
   const asOf = Math.max(...[...bySymbol.values()].map((chart) => chart.marketTime), 0) * 1000;
   const result: ScanOk = { ok: true, asOf, market, stocks, failed };
-  cache = { at: Date.now(), extraKey, result, spyRet63 };
+  cache = { at: Date.now(), extraKey, result, spy };
   return result;
 }
 
@@ -222,16 +238,20 @@ function lookup(symbol: string): StockSnapshot | null {
 }
 
 async function loadOne(symbol: string): Promise<StockSnapshot | null> {
-  const needSpy = cache?.spyRet63 == null;
+  const needSpy = cache?.spy == null;
   const [raw, spyRaw] = await Promise.all([
     fetchChart(symbol),
     needSpy ? fetchChart("SPY") : Promise.resolve(null),
   ]);
   if (!raw) return null;
-  const spyRet63 =
-    cache?.spyRet63 ??
-    (spyRaw ? trailingReturn(spyRaw.bars.map((bar) => bar.c), 63) : null);
-  return snapshotFromRaw(raw, spyRet63);
+  const closes = spyRaw?.bars.map((bar) => bar.c) ?? [];
+  const spy: SpyRets = cache?.spy ?? {
+    ret10: trailingReturn(closes, 10),
+    ret20: trailingReturn(closes, 20),
+    ret30: trailingReturn(closes, 30),
+    ret63: trailingReturn(closes, 63),
+  };
+  return snapshotFromRaw(raw, spy);
 }
 
 function cleanText(value: string): string {
@@ -284,7 +304,9 @@ async function writeWithGrok(snap: StockSnapshot): Promise<ExplainResult> {
     `現價 ${snap.price}，今日 ${snap.changePct}`,
     `分數 ${snap.score}，傾向 ${snap.bias}`,
     `近月 ${snap.ret21 ?? "n/a"}，三月 ${snap.ret63 ?? "n/a"}，RSI ${snap.rsi ?? "n/a"}`,
-    `一個月情境 低 ${snap.scenario.low}（${formatMoney(priceAt(snap.price, snap.scenario.low))}）基準 ${snap.scenario.base}（${formatMoney(priceAt(snap.price, snap.scenario.base))}）高 ${snap.scenario.high}（${formatMoney(priceAt(snap.price, snap.scenario.high))}）`,
+    `10/20/30 日 ${snap.horizons.map((row) => `${row.days}:${row.bias}/${row.base}`).join(" ")}`,
+    `買入訊號 ${snap.buy}。${snap.buyNote}`,
+    `20 日情境 低 ${snap.scenario.low}（${formatMoney(priceAt(snap.price, snap.scenario.low))}）基準 ${snap.scenario.base}（${formatMoney(priceAt(snap.price, snap.scenario.base))}）高 ${snap.scenario.high}（${formatMoney(priceAt(snap.price, snap.scenario.high))}）`,
     "因子：",
     factors,
     "自動摘要：",

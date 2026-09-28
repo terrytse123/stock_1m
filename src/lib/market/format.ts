@@ -1,4 +1,4 @@
-import type { Bias } from "./types";
+import type { Bias, BuySignal } from "./types";
 
 export function formatPct(n: number, digits = 1): string {
   const value = n * 100;
@@ -73,4 +73,16 @@ export function biasClass(bias: Bias): string {
   if (bias === "up") return "text-up";
   if (bias === "down") return "text-down";
   return "text-muted";
+}
+
+export function buyLabel(signal: BuySignal): string {
+  if (signal === "buy") return "買入";
+  if (signal === "wait") return "等待";
+  return "不買";
+}
+
+export function buyClass(signal: BuySignal): string {
+  if (signal === "buy") return "text-up";
+  if (signal === "wait") return "text-muted";
+  return "text-down";
 }

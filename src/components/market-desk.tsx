@@ -6,7 +6,7 @@ import { SwingBoard } from "@/components/swing-board";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { explainStock, scanMarket } from "@/lib/market/api";
-import { biasClass, biasLabel, formatMoney, formatPct, formatWhen, priceAt, toneClass } from "@/lib/market/format";
+import { biasClass, biasLabel, buyClass, buyLabel, formatMoney, formatPct, formatWhen, priceAt, toneClass } from "@/lib/market/format";
 import { useBook } from "@/lib/market/store";
 import { buildSwingPlans } from "@/lib/market/swing";
 import type { ScanResult, StockSnapshot } from "@/lib/market/types";
@@ -34,6 +34,7 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
   const [sector, setSector] = useState("all");
   const [sort, setSort] = useState<SortKey>("score");
   const [onlyUp, setOnlyUp] = useState(false);
+  const [onlyBuy, setOnlyBuy] = useState(false);
   const [onlyWatch, setOnlyWatch] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [note, setNote] = useState<NoteState>({ symbol: "", status: "idle", text: null, error: null });
@@ -143,6 +144,7 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
     let next = stocks;
     if (sector !== "all") next = next.filter((stock) => stock.sector === sector);
     if (onlyUp) next = next.filter((stock) => stock.bias === "up");
+    if (onlyBuy) next = next.filter((stock) => stock.buy === "buy");
     if (onlyWatch) next = next.filter((stock) => watched.includes(stock.symbol));
     const copy = [...next];
     copy.sort((a, b) => {
@@ -152,7 +154,7 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
       return a.rank - b.rank;
     });
     return copy;
-  }, [onlyUp, onlyWatch, sector, sort, stocks, watched]);
+  }, [onlyBuy, onlyUp, onlyWatch, sector, sort, stocks, watched]);
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -240,7 +242,7 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
               </p>
             </div>
             <p className="mt-2 max-w-2xl text-sm text-muted">
-              分數越高，越傾向未來約 21 個交易日收盤高於今日。情境用收縮後的近期漂移，加減大約一個月的波動。
+              上行分數仍是綜合排序。下面分開看 10、20、30 個交易日的方向和基準價，買入訊號要短線沒轉弱、而且還沒追太高。
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               {top.map((stock) => (
@@ -266,18 +268,18 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
                       <span className={cn("block text-xs font-medium", biasClass(stock.bias))}>{biasLabel(stock.bias)}</span>
                     </span>
                   </span>
-                  <span className="mt-4 flex items-baseline justify-between text-xs">
-                    <span className="text-subtle">{stock.bias === "up" ? "預計價位" : "情境基準"}</span>
-                    <span className={cn("num font-medium", stock.bias === "up" ? "text-up" : toneClass(stock.scenario.base))}>
-                      {formatMoney(priceAt(stock.price, stock.scenario.base))}
+                  {stock.horizons.map((horizon) => (
+                    <span key={horizon.days} className="mt-1 flex items-baseline justify-between gap-3 text-xs">
+                      <span className="text-subtle">{horizon.days} 日</span>
+                      <span className="flex items-baseline gap-2">
+                        <span className={biasClass(horizon.bias)}>{biasLabel(horizon.bias)}</span>
+                        <span className="num">{formatMoney(priceAt(stock.price, horizon.base))}</span>
+                      </span>
                     </span>
-                  </span>
-                  <span className="mt-1 flex items-baseline justify-between text-xs text-subtle">
-                    <span>區間</span>
-                    <span className="num">
-                      {formatMoney(priceAt(stock.price, stock.scenario.low))} –{" "}
-                      {formatMoney(priceAt(stock.price, stock.scenario.high))}
-                    </span>
+                  ))}
+                  <span className="mt-2 flex items-baseline justify-between text-xs">
+                    <span className="text-subtle">訊號</span>
+                    <span className={cn("font-medium", buyClass(stock.buy))}>{buyLabel(stock.buy)}</span>
                   </span>
                 </button>
               ))}
@@ -327,6 +329,9 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
               <Button variant={onlyUp ? "primary" : "quiet"} onClick={() => setOnlyUp((value) => !value)}>
                 只看升
               </Button>
+              <Button variant={onlyBuy ? "primary" : "quiet"} onClick={() => setOnlyBuy((value) => !value)}>
+                只看買入
+              </Button>
               <Button
                 variant={onlyWatch ? "primary" : "quiet"}
                 onClick={() => setOnlyWatch((value) => !value)}
@@ -339,7 +344,11 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
             <div className={cn("mt-4 overflow-hidden rounded-xl border border-line bg-surface", pending && "opacity-70")}>
               {rows.length === 0 ? (
                 <p className="px-4 py-8 text-sm text-muted">
-                  {onlyWatch ? "還沒有追蹤。在名單上點星號即可釘選，這台裝置會記住。" : "這個篩選下面沒有標的。"}
+                  {onlyWatch
+                    ? "還沒有追蹤。在名單上點星號即可釘選，這台裝置會記住。"
+                    : onlyBuy
+                      ? "這次沒有買入訊號。可看「等待」，或更新後再篩。"
+                      : "這個篩選下面沒有標的。"}
                 </p>
               ) : (
                 <ul>
@@ -378,7 +387,8 @@ export function MarketDesk({ initial }: { initial: ScanResult }) {
           <summary className="cursor-pointer text-sm text-muted">這個分數怎麼來的</summary>
           <p className="mt-3 max-w-3xl">
             用大約一年的日線計算六個因子：均線趨勢、一個月動能、三個月動能、RSI、相對標普 500、成交量是否配合。
-            權重大致是 28%、22%、16%、12%、14%、8%，缺資料的因子會拿掉並把其餘權重重新分配。動能偏好溫和上漲，暴漲會因均值回歸風險被扣分。
+            10、20、30 日另外各算一次方向：短天期更看 RSI 和是否離均線太遠，長天期更看趨勢和相對標普。
+            買入要同時滿足 20 日看升、10 日沒轉弱、RSI 大約在 42 到 64、而且還貼著 50 日均線。
             看升、中性、承壓是分數區間，不是回測過的勝率。
           </p>
         </details>
@@ -427,9 +437,7 @@ function StockRow({
         <span className="w-20 shrink-0 text-right">
           <span className="type-score block text-xl">{stock.score}</span>
           <span className={cn("text-xs", biasClass(stock.bias))}>{biasLabel(stock.bias)}</span>
-          {stock.bias === "up" ? (
-            <span className="num mt-0.5 block text-xs text-up">{formatMoney(priceAt(stock.price, stock.scenario.base))}</span>
-          ) : null}
+          <span className={cn("mt-0.5 block text-xs", buyClass(stock.buy))}>{buyLabel(stock.buy)}</span>
         </span>
       </button>
       <button
